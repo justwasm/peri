@@ -36,9 +36,9 @@ detect_platform() {
     # Allow manual override
     if [[ -n "${PERI_INSTALL_PLATFORM:-}" ]]; then
         # Validate format: os-arch
-        if [[ ! "${PERI_INSTALL_PLATFORM}" =~ ^(macos|linux|windows)-(x86_64|aarch64|riscv64)$ ]]; then
+        if [[ ! "${PERI_INSTALL_PLATFORM}" =~ ^(macos|linux|windows)-(x86_64|i686|aarch64|riscv64)$ ]]; then
             error "Invalid PERI_INSTALL_PLATFORM: ${PERI_INSTALL_PLATFORM}"
-            echo "  Expected: macos-x86_64 | macos-aarch64 | linux-x86_64 | linux-aarch64 | linux-riscv64 | windows-x86_64"
+            echo "  Expected: macos-x86_64 | macos-aarch64 | linux-x86_64 | linux-i686 | linux-aarch64 | linux-riscv64 | windows-x86_64"
             exit 1
         fi
         info "Platform (manual): ${PERI_INSTALL_PLATFORM}" >&2
@@ -53,9 +53,10 @@ detect_platform() {
     esac
 
     case "$(uname -m)" in
-        x86_64|amd64)  arch="x86_64" ;;
-        aarch64|arm64) arch="aarch64" ;;
-        riscv64)       arch="riscv64" ;;
+        x86_64|amd64)          arch="x86_64" ;;
+        i386|i486|i586|i686)    arch="i686" ;;
+        aarch64|arm64)         arch="aarch64" ;;
+        riscv64)               arch="riscv64" ;;
         *)             error "Unsupported arch: $(uname -m)"; exit 1 ;;
     esac
 

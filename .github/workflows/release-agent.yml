@@ -4,9 +4,16 @@ on:
     push:
         tags:
             - "agent-v*"
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: Release tag to build and publish
+                required: true
+                type: string
 
 env:
     CARGO_TERM_COLOR: always
+    RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
     build:
@@ -17,12 +24,19 @@ jobs:
             matrix:
                 include:
                     - os: ubuntu-latest
-                      target: x86_64-unknown-linux-gnu
+                      target: x86_64-unknown-linux-musl
                       platform: linux-x86_64
+                      alpine_platform: linux/amd64
                       ext: ""
                     - os: ubuntu-latest
-                      target: aarch64-unknown-linux-gnu
+                      target: i686-unknown-linux-musl
+                      platform: linux-i686
+                      alpine_platform: linux/386
+                      ext: ""
+                    - os: ubuntu-latest
+                      target: aarch64-unknown-linux-musl
                       platform: linux-aarch64
+                      alpine_platform: linux/arm64
                       ext: ""
                     - os: macos-latest
                       target: x86_64-apple-darwin
@@ -33,8 +47,9 @@ jobs:
                       platform: macos-aarch64
                       ext: ""
                     - os: ubuntu-latest
-                      target: riscv64gc-unknown-linux-gnu
+                      target: riscv64gc-unknown-linux-musl
                       platform: linux-riscv64
+                      alpine_platform: linux/riscv64
                       ext: ""
                     - os: windows-latest
                       target: x86_64-pc-windows-msvc
@@ -44,11 +59,13 @@ jobs:
         steps:
             - name: Checkout repository
               uses: actions/checkout@v7
+              with:
+                  ref: ${{ env.RELEASE_TAG }}
 
             - name: Set version from tag
               shell: bash
               run: |
-                  VERSION="${GITHUB_REF_NAME#agent-v}"
+                  VERSION="${RELEASE_TAG#agent-v}"
                   echo "Setting version to ${VERSION}"
                   sed -i.bak -e "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
                   rm -f Cargo.toml.bak
@@ -77,13 +94,55 @@ jobs:
                       ${{ runner.os }}-${{ matrix.target }}-build-
                       ${{ runner.os }}-${{ matrix.target }}-
 
-            - name: Install cross
+            - name: Install Zig
               if: runner.os == 'Linux'
-              run: cargo install cross
+              shell: bash
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install --yes axel
+                  ZIG_VERSION=0.17.0-dev.2151+2ec5523d5
+                  ZIG_ARCHIVE="zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+                  axel --num-connections=16 --output="${ZIG_ARCHIVE}" \
+                      "https://ziglang.org/builds/${ZIG_ARCHIVE}"
+                  echo "6393818b7e318bd4ffa345a736a092d780df9ba257b2e7b56cd6366a7a40584b  ${ZIG_ARCHIVE}" | sha256sum --check
+                  tar --extract --file "${ZIG_ARCHIVE}"
+                  echo "${PWD}/zig-x86_64-linux-${ZIG_VERSION}" >> "${GITHUB_PATH}"
 
-            - name: Build agent-tui (Linux)
+            - name: Install cargo-zigbuild
               if: runner.os == 'Linux'
-              run: cross build -p peri-tui --release --target ${{ matrix.target }}
+              run: cargo install cargo-zigbuild
+
+            - name: Build static agent-tui (Linux)
+              if: runner.os == 'Linux'
+              env:
+                  RUSTFLAGS: -C target-feature=+crt-static
+              run: cargo zigbuild -p peri-tui --release --target ${{ matrix.target }}
+
+            - name: Verify static Linux binary
+              if: runner.os == 'Linux'
+              shell: bash
+              run: |
+                  BINARY="target/${{ matrix.target }}/release/peri"
+                  if readelf -l "${BINARY}" | grep -q 'Requesting program interpreter'; then
+                      echo "Linux release binary has a dynamic loader."
+                      exit 1
+                  fi
+                  if readelf -d "${BINARY}" | grep -q '(NEEDED)'; then
+                      echo "Linux release binary has dynamic library dependencies."
+                      exit 1
+                  fi
+
+            - name: Set up QEMU for Alpine verification
+              if: runner.os == 'Linux'
+              uses: docker/setup-qemu-action@v3
+
+            - name: Run static Linux binary in Alpine
+              if: runner.os == 'Linux'
+              run: |
+                  docker run --rm --platform ${{ matrix.alpine_platform }} \
+                      --volume "${PWD}/target/${{ matrix.target }}/release/peri:/usr/local/bin/peri:ro" \
+                      alpine:3.21 \
+                      /usr/local/bin/peri --help
 
             - name: Build agent-tui (non-Linux)
               if: runner.os != 'Linux'
@@ -124,6 +183,8 @@ jobs:
         steps:
             - name: Checkout repository
               uses: actions/checkout@v7
+              with:
+                  ref: ${{ env.RELEASE_TAG }}
 
             - name: Download all artifacts
               uses: actions/download-artifact@v4
@@ -145,8 +206,10 @@ jobs:
               with:
                   files: |
                       artifacts/*
+                  overwrite_files: true
+                  tag_name: ${{ env.RELEASE_TAG }}
                   generate_release_notes: true
                   draft: false
-                  prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+                  prerelease: ${{ contains(env.RELEASE_TAG, '-alpha') || contains(env.RELEASE_TAG, '-beta') || contains(env.RELEASE_TAG, '-rc') }}
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

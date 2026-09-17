@@ -99,6 +99,8 @@ Rewind · Fork · Resume<br>
 curl -fsSL https://raw.githubusercontent.com/konghayao/peri/main/scripts/install.sh | bash
 ```
 
+Linux releases are fully static musl binaries for x86_64, i686, aarch64, and riscv64, including Alpine Linux.
+
 **Windows PowerShell**
 
 ```powershell
